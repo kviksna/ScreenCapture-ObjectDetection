@@ -15,28 +15,32 @@
 <div id="videoDiv" style="float:left; margin-right:5px;border: 1px solid gray;">
 	<video id="video" autoplay></video>
 </div>
-<button onClick="startCapture()">startCapture()</button>&nbsp;
+<button onClick="startCapture()">startCapture()</button>
 <button onClick="stopCapture()">stopCapture()</button>&nbsp;
-<br>
-<button onClick="videoElem.play()">Video.Play()</button>&nbsp;
-<button onClick="videoElem.pause()">Video.Pause()</button>&nbsp;
-<br>
+<button onClick="videoElem.play()">Play()</button>
+<button onClick="videoElem.pause()">Pause()</button>&nbsp;
 <button onClick="startWebCam()">startWebCam()</button>&nbsp;
+<br>
 <br>
 Model: <select id="model">
 	<option value="MobileNet">MobileNet</option>
 	<option value="cocossd">COCOSSD</option>
 	<option value="yolo">YOLO</option>
 </select>&nbsp;
-<button onClick="changeModel()">changeModel()</button>&nbsp;
+<button onClick="loadModel()">loadModel()</button>&nbsp;
 <button onClick="detect()">Detect()</button>&nbsp;
-<button onClick="clearLog()">clearLog()</button>&nbsp;
-<textarea id="log" cols="60" rows="30" style="background-color:black;color:gray;"></textarea>
+<button onClick="load_poseNet()">poseNet()</button>&nbsp;
+<textarea id="log" cols="60" rows="30" style="background-color:black;color:gray;">
+1. [StartCapture()] or [startWebCam()]
+2. [loadModel()] => [Detect()] or [poseNet()]
+</textarea>
+<button onClick="clearLog()">clearLog()</button> Bytes: <span id="logBytes"></span>
 
 <script>
 const videoElem = document.getElementById("video");
 const modelElem = document.getElementById("model");
 const logElem = document.getElementById("log");
+const logBytesElem = document.getElementById("logBytes");
 const width = 720;
 const height = 570;
 let objectDetector;
@@ -44,8 +48,10 @@ let objects = [];
 let canvas, ctx;
 
 function Log(str) {
-	logElem.innerHTML += "["+logElem.innerHTML.length+"] " + str + '\n';
+	//logElem.innerHTML += "["+logElem.innerHTML.length+"] " + str + '\n';
+	logElem.innerHTML += str + '\n';
 	logElem.scrollTop = logElem.scrollHeight; //Auto scroll to end
+	logBytesElem.innerHTML = logElem.innerHTML.length;
 }
 function clearLog() { logElem.innerHTML = ''; }
 
@@ -53,7 +59,11 @@ async function startCapture() {
 	Log("ScreenCapture: starting");
 	// Options for getDisplayMedia()
 	var displayMediaOptions = {
-		//video: { cursor: "always" },
+//		video: { 
+//			aspectRatio: "1",
+//			cursor: "always",
+//			resizeMode: "none"
+//		},
 		audio: false
 	};
 
@@ -76,13 +86,11 @@ function stopCapture() {
   videoElem.srcObject = null;
 }
 
-async function loadModel() {
+async function setupCanvas() {
   videoElem.setAttribute("style", "display: none;");
   videoElem.width = width;
   videoElem.height = height;
   videoElem.play();
-
-  changeModel();
   
   const canvas = document.createElement("canvas"); 
   canvas.width  = width;
@@ -90,47 +98,104 @@ async function loadModel() {
 
   const videoDivElem = document.getElementById("videoDiv");
   videoDivElem.appendChild(canvas);
-  
   ctx = canvas.getContext('2d');
 }
-async function changeModel() {
-
+async function loadModel() {
   Log("Wait for Model("+modelElem.value+")...");
   //objectDetector = await ml5.objectDetector('cocossd', function() {
   objectDetector = await ml5.objectDetector(modelElem.value, function() {
-	Log('Model('+modelElem.value+'): ready (Start [Detect()], after tab video feed share with [startCapture()]!)'); })
+	Log('Model('+modelElem.value+'): ready'); })
 }
 
 // when the dom is loaded, call loadModel();
 window.addEventListener('DOMContentLoaded', function() {
-  loadModel();
+  setupCanvas();
 });
 
+let poses = [];
+function load_poseNet() {
+	Log("Wait for Model(poseNet)...");
+	// Create a new poseNet method
+	const poseNet = ml5.poseNet(videoElem, function() {
+		Log('Model(poseNet): ready'); });
+
+	// Listen to new 'pose' events
+	poseNet.on("pose", function(results) {
+		poses = results;
+		if(poses) {
+			refreshCanvas();
+			drawKeypoints();
+			drawSkeleton();
+			Log("Poses: "+poses.length);
+		}
+	});
+}
+const cx = 10; //X correction (workaround)
+const cy = -50; //Y correction (workaround)
+// A function to draw ellipses over the detected keypoints
+function drawKeypoints()  {
+  // Loop through all the poses detected
+  for (let i = 0; i < poses.length; i++) {
+    // For each pose detected, loop through all the keypoints
+    let pose = poses[i].pose;
+    for (let j = 0; j < pose.keypoints.length; j++) {
+      // A keypoint is an object describing a body part (like rightArm or leftShoulder)
+      let keypoint = pose.keypoints[j];
+      // Only draw an ellipse is the pose probability is bigger than 0.2
+      if (keypoint.score > 0.2) {
+        ctx.fillStyle = "red";
+		ctx.fillRect(keypoint.position.x+cx, keypoint.position.y+cy, 4, 4);
+} } } }
+// A function to draw the skeletons
+function drawSkeleton() {
+  // Loop through all the skeletons detected
+  for (let i = 0; i < poses.length; i++) {
+    let skeleton = poses[i].skeleton;
+    // For every skeleton, loop through all body connections
+    for (let j = 0; j < skeleton.length; j++) {
+      let partA = skeleton[j][0];
+      let partB = skeleton[j][1];
+	  ctx.strokeStyle = "green";
+      ctx.beginPath();
+	  ctx.moveTo(partA.position.x+cx, partA.position.y+cy);
+	  ctx.lineTo(partB.position.x+cx, partB.position.y+cy);
+	  ctx.stroke();
+} } }
+
 function detect() {
-  objectDetector.detect(videoElem, function(err, results) {
+	objectDetector.detect(videoElem, function(err, results) {
     if(err){
       Log("objectDetector(Error): " + err);
       return
     }
     objects = results;
-    if(objects){ drawObjOutline(); }
+    if(objects){
+		refreshCanvas();
+		drawObjOutline();
+		objstr="";
+		for (let i = 0; i < objects.length; i += 1) {
+			//Log("Object: " + objects[i].label);
+			objstr += objects[i].label + " "
+		}
+		Log("Objects ("+objects.length+"): " + objstr);
+	}
     detect();
   });
 }
 
-function drawObjOutline(){
+function refreshCanvas() {
   // Clear part of the canvas
   ctx.fillStyle = "#000000"
   ctx.fillRect(0,0, width, height);
 
-  ctx.drawImage(video, 0, 0);
+  ctx.drawImage(videoElem, 0, 0);
+}
+
+function drawObjOutline(){
   for (let i = 0; i < objects.length; i += 1) {
-      
     ctx.font = "16px Arial";
     ctx.fillStyle = "red"; //green
     ctx.fillText(objects[i].label, objects[i].x + 4, objects[i].y + 16);
-	Log("Object detected: " + objects[i].label);
-
     ctx.beginPath();
     ctx.rect(objects[i].x, objects[i].y, objects[i].width, objects[i].height);
     ctx.strokeStyle = "red"; //green
