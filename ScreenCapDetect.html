@@ -41,8 +41,8 @@ const videoElem = document.getElementById("video");
 const modelElem = document.getElementById("model");
 const logElem = document.getElementById("log");
 const logBytesElem = document.getElementById("logBytes");
-const width = 720;
-const height = 570;
+let height = 570; //default
+let width = 720; //default
 let objectDetector;
 let objects = [];
 let canvas, ctx;
@@ -67,16 +67,23 @@ async function startCapture() {
 		audio: false
 	};
 
-  try {
+  //try {
     videoElem.srcObject = await navigator.mediaDevices.getDisplayMedia(displayMediaOptions);
     const videoTrack = videoElem.srcObject.getVideoTracks()[0];
-	Log("ScreenCapture(info): Track settings:");
-	Log("ScreenCapture(info): " + JSON.stringify(videoTrack.getSettings(), null, 2));
-	Log("ScreenCapture(info): Track constraints:");
-	Log("ScreenCapture(info): " + JSON.stringify(videoTrack.getConstraints(), null, 2));
-  } catch(err) {
-    Log("ScreenCapture(Error): " + err);
-  }
+	//let videoSets = videoTrack.getSettings();
+	//Log("I got: " + videoSets.height + " - " + videoSets.width);
+	//Dimensions does not give Tab's dimensions, but all screen dimensions!
+	//height = parseInt(videoSets.height);
+	//width = parseInt(videoSets.width);
+	//canvas.width  = width;
+	//canvas.height = height;
+	//Log("ScreenCapture(info) Track settings: " + JSON.stringify(videoSets, null, 2));
+	//Log("ScreenCapture(info): Track constraints:");
+	//Log("ScreenCapture(info): " + JSON.stringify(videoTrack.getConstraints(), null, 2));
+  //} catch(err) {
+  //  Log("ScreenCapture(Error): " + err);
+  //}
+	Log("ScreenCapture: started")
 }
 function stopCapture() {
   Log("ScreenCapture: stopping")
@@ -92,7 +99,7 @@ async function setupCanvas() {
   videoElem.height = height;
   videoElem.play();
   
-  const canvas = document.createElement("canvas"); 
+  canvas = document.createElement("canvas");
   canvas.width  = width;
   canvas.height = height;
 
@@ -122,7 +129,7 @@ function load_poseNet() {
 	// Listen to new 'pose' events
 	poseNet.on("pose", function(results) {
 		poses = results;
-		if(poses) {
+		if(poses) if(poses.length>0){
 			refreshCanvas();
 			drawKeypoints();
 			drawSkeleton();
@@ -169,7 +176,7 @@ function detect() {
       return
     }
     objects = results;
-    if(objects){
+    if(objects) if (objects.length>0){
 		refreshCanvas();
 		drawObjOutline();
 		objstr="";
