@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Three.js Screen Capture with Object Detection</title>
+    <style>
+        body { 
+            margin: 0; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            min-height: 100vh;
+            background-color: #1a1a1a;
+            color: #ffffff;
+            font-family: Arial, sans-serif;
+        }
+        canvas { 
+            display: block; 
+            margin-top: 20px;
+        }
+        #detectedObjects { 
+            width: 1024px; 
+            height: 100px; 
+            background-color: #2a2a2a;
+            color: #ffffff;
+            border: 1px solid #444;
+            padding: 10px;
+            font-family: monospace;
+            resize: vertical;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+    <textarea id="detectedObjects" readonly></textarea>
+    <script>
+        let camera, scene, renderer;
+        let videoTexture, videoMaterial, videoScreen;
+        let cocoSsdModel;
+        let labelSprites = [];
+
+        const CANVAS_WIDTH = 1024;
+        const CANVAS_HEIGHT = 576; // 16:9 aspect ratio
+
+        function logMessage(message, data = null) {
+            const timestamp = new Date().toLocaleTimeString();
+            let formattedMessage = `[${timestamp}] ${message}`;
+            if (data) {
+                formattedMessage += '\n' + JSON.stringify(data, null, 2);
+            }
+            console.log(formattedMessage);
+        }
+
+        async function init() {
+            logMessage("Initializing...");
+            
+            // Set up Three.js scene
+            camera = new THREE.PerspectiveCamera(70, CANVAS_WIDTH / CANVAS_HEIGHT, 0.01, 10);
+            camera.position.z = 1;
+
+            scene = new THREE.Scene();
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+            document.body.insertBefore(renderer.domElement, document.body.firstChild);
+
+            logMessage("Three.js scene set up");
+
+            // Load COCO-SSD model
+            logMessage("Loading COCO-SSD model...");
+            cocoSsdModel = await cocoSsd.load();
+            logMessage("COCO-SSD model loaded");
+
+            // Get screen capture
+            try {
+                logMessage("Requesting screen capture...");
+                const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+                const video = document.createElement('video');
+                video.srcObject = stream;
+                video.play();
+
+                logMessage("Screen capture started");
+
+                // Create video texture
+                videoTexture = new THREE.VideoTexture(video);
+                videoMaterial = new THREE.MeshBasicMaterial({ map: videoTexture });
+                
+                // Create a plane to display the video
+                const geometry = new THREE.PlaneGeometry(1.6, 0.9);  // 16:9 aspect ratio
+                videoScreen = new THREE.Mesh(geometry, videoMaterial);
+                scene.add(videoScreen);
+
+                logMessage("Video screen added to scene");
+
+            } catch (err) {
+                logMessage("Error in screen capture:", err);
+            }
+        }
+
+        async function detectObjects() {
+            if (!videoTexture.image) return;
+
+            const canvas = document.createElement('canvas');
+            canvas.width = CANVAS_WIDTH;
+            canvas.height = CANVAS_HEIGHT;
+            canvas.getContext('2d').drawImage(videoTexture.image, 0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            logMessage("Detecting objects...");
+            const predictions = await cocoSsdModel.detect(canvas);
+            logMessage("Objects detected:", predictions);
+
+            // Clear previous labels
+            labelSprites.forEach(sprite => scene.remove(sprite));
+            labelSprites = [];
+
+            let detectedObjectsText = "";
+
+            predictions.forEach(prediction => {
+                const [x, y, width, height] = prediction.bbox;
+                detectedObjectsText += `${prediction.class} (${Math.round(prediction.score * 100)}%)\n`;
+
+                // Create rectangle
+                const rectGeometry = new THREE.PlaneGeometry(width / CANVAS_WIDTH * 1.6, height / CANVAS_HEIGHT * 0.9);
+                const rectMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000, side: THREE.DoubleSide, transparent: true, opacity: 0.3 });
+                const rectMesh = new THREE.Mesh(rectGeometry, rectMaterial);
+                rectMesh.position.set(
+                    (x + width / 2) / CANVAS_WIDTH * 1.6 - 0.8,
+                    -(y + height / 2) / CANVAS_HEIGHT * 0.9 + 0.45,
+                    0.01
+                );
+                scene.add(rectMesh);
+                labelSprites.push(rectMesh);
+
+                // Create label
+                const canvas2 = document.createElement('canvas');
+                const context = canvas2.getContext('2d');
+                context.font = '48px Arial';
+                context.fillStyle = 'white';
+                context.fillText(prediction.class, 0, 48);
+                const texture = new THREE.CanvasTexture(canvas2);
+                const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
+                const sprite = new THREE.Sprite(spriteMaterial);
+                sprite.scale.set(0.1, 0.05, 1);
+                sprite.position.set(
+                    (x + width / 2) / CANVAS_WIDTH * 1.6 - 0.8,
+                    -(y + height / 2) / CANVAS_HEIGHT * 0.9 + 0.45 + 0.05,
+                    0.02
+                );
+                scene.add(sprite);
+                labelSprites.push(sprite);
+            });
+
+            document.getElementById('detectedObjects').value = detectedObjectsText;
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            detectObjects();
+            renderer.render(scene, camera);
+        }
+
+        init().then(() => {
+            logMessage("Initialization complete. Starting animation loop.");
+            animate();
+        });
+
+        // No need for window resize event listener as the canvas size is fixed
+    </script>
+</body>
+</html>
